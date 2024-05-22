@@ -1,50 +1,112 @@
-name: Java CI with Maven
+# This workflow will build a package using Maven and then publish it to GitHub packages when a release is created
+# For more information see: https://github.com/actions/setup-java#apache-maven-with-a-settings-path
 
-# 检测到 src 文件内 .java 文件有变动执行编译
+name: CI
+
 on:
+  ## 触发条件, release.json有被修改
   push:
     paths:
-      - '**/*src/**/*.java'
+      # Trigger only when src/** changes
+      - ".github/release.json"
+      
+  pull_request:
+    paths:
+    # Trigger only when src/** changes
+      - ".github/release.json"
 
 jobs:
   build:
-#	配置权限
-    permissions: write-all
+
     runs-on: ubuntu-latest
+   
     steps:
-# 下载代码
-    - uses: actions/checkout@v3
-    - name: Set up JDK 11
-# 安装 JDK
-      uses: actions/setup-java@v3
+    ## 取出项目代码，设置java环境
+    - uses: actions/checkout@v2
+    - name: Set up JDK 1.8
+      uses: actions/setup-java@v1
       with:
-        java-version: '11'
-        distribution: 'temurin'
-        cache: maven
-# 配置 settings.xml 一般用于 Mavne 私库验证等
-    - name: maven-settings-xml-action
-      uses: whelk-io/maven-settings-xml-action@v20
+        java-version: 1.8
+    
+    ## 从release.json 读取相关信息
+    - name: Read tag_main
+      id: tag_main
+      uses:  ashley-taylor/read-json-property-action@v1.0
       with:
-        repositories: ''
-        servers: ''
-# Maven 打包 
-    - name: Build with Maven
-      run: mvn -B package --file pom.xml
-# 将打包好的 Jar 包 放到 staging 文件夹
-    - run: mkdir staging && cp target/*.jar staging
-# 设置 jobs Maven pom 版本环境变量
-    - name: Set Release version env variable
+        path: ./.github/release.json
+        property: tag_main
+    
+    - name: Read tag_latest
+      id: tag_latest
+      uses:  ashley-taylor/read-json-property-action@v1.0
+      with:
+        path: ./.github/release.json
+        property: tag_latest
+        
+    - name: Read description
+      id: description
+      uses: juliangruber/read-file-action@v1
+      with:
+        path: ./.github/release.info
+ 
+    ## 打包项目jar包
+    - name: MVN Package
       run: |
-        echo "RELEASE_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
-    - name: "Build & test"
+        mvn -B package assembly:single --file pom.xml -Dmaven.test.skip=true
+
+    ## 将jar包和其它相关文件打包压缩
+    - name: ZIP files
       run: |
-        echo "done!"
-# 上传文件并发布 Release
-    - uses: "marvinpinto/action-automatic-releases@latest"
+        mv -f ./target/live-record-${ {steps.tag_main.outputs.value}}-jar-with-dependencies.jar BiliLiveRecorder.jar
+        rm -rf ./plugin
+        rm -rf ./LICENSE
+        mkdir ./plugin/
+        mkdir ./LICENSE/
+        mv -f ./release/run-zhanqi.bat .
+        mv -f ./release/run-yy.bat .
+        mv -f ./release/run-kuaishou.bat .
+        mv -f ./release/run-huya.bat .
+        mv -f ./release/run-douyu.bat .
+        mv -f ./release/run-bili.bat .
+        mv -f ./release/checkFlv.splitScripts.bat .
+        mv -f ./release/checkFlv.bat .
+        mv -f ./release/plugin/* ./plugin/
+        mv -f ./release/LICENSE/* ./LICENSE/        
+        
+        zip BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip BiliLiveRecorder.jar
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./run-zhanqi.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./run-yy.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./run-kuaishou.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./run-huya.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./run-douyu.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./run-bili.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./checkFlv.bat
+        zip -m BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./checkFlv.splitScripts.bat
+        zip -rm BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./plugin/
+        zip -rm BilibiliLiveRecord\ v${ {steps.tag_latest.outputs.value}}.zip ./LICENSE/
+    
+    ## 发布Release
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@latest
+      env:
+        GITHUB_TOKEN: ${ { secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
       with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "${{ env.RELEASE_VERSION }}"
+        tag_name: V${ {steps.tag_latest.outputs.value}}
+        release_name: BiliLiveRecorder - v${ {steps.tag_latest.outputs.value}}
+        body: |
+          ${ {steps.description.outputs.content}}
+        draft: false
         prerelease: false
-        title: "Release ${{ env.RELEASE_VERSION }}"
-        files: |
-          staging/*.jar
+
+    ## 上传附件
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${ { secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${ { steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+        asset_path: ./BilibiliLiveRecord v${ {steps.tag_latest.outputs.value}}.zip
+        asset_name: BilibiliLiveRecord.v${ {steps.tag_latest.outputs.value}}.zip
+        asset_content_type: application/zip
