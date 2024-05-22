@@ -5,6 +5,7 @@ import com.chenzhi.atool.util.AToolLog;
 
 /**
  * Created by chenzhi on 2018年3月20日
+ * Test01
  */
 public class ATool {
 
